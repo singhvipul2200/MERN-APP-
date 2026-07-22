@@ -1,150 +1,141 @@
 # ============================================================
-# Name of this workflow (shown in the GitHub Actions tab)
+# Name of this workflow
 # ============================================================
 name: Namaste MERN CI/CD Pipeline
 
 # ============================================================
-# TRIGGER: Manual only
-# "workflow_dispatch" adds a "Run workflow" button
-# in the GitHub Actions tab — nothing runs automatically
-# on push or pull_request unless you add those triggers too.
+# Manual Trigger
 # ============================================================
 on:
   workflow_dispatch:
     inputs:
       reason:
-        description: 'Why are you running this pipeline manually?'
+        description: "Why are you running this pipeline manually?"
         required: false
-        default: 'Manual trigger'
+        default: "Manual Trigger"
 
 jobs:
 
-  # ==========================================================
-  # JOB 1: UNIT TESTS
-  # Runs on a GitHub-hosted Ubuntu runner (free, managed by GitHub)
-  # ==========================================================
+# ============================================================
+# JOB 1 - UNIT TESTS
+# ============================================================
   unit-tests:
     name: Run Unit Tests
-    runs-on: ubuntu-latest   # GitHub-hosted runner
-
-    steps:
-      # Step 1: Pull your repo code onto the runner
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      # Step 2: Install Node.js on the runner
-      - name: Setup Node.js
-        uses: actions/setup-node@v5
-        with:
-          node-version: '24'
-
-      # Step 3: Install backend dependencies and run backend tests
-      - name: Install & test backend
-        working-directory: ./backend
-        run: |
-          npm install
-          npm test -- --ci
-
-      # Step 4: Install frontend dependencies and run frontend tests
-      - name: Install & test frontend
-        working-directory: ./frontend
-        run: |
-          npm install
-          npm test -- --watchAll=false
-
-
-  # ==========================================================
-  # JOB 2: SONARCLOUD SCAN
-  # This job only starts after "unit-tests" succeeds (needs:)
-  # ==========================================================
-  sonarcloud:
-    name: SonarCloud Code Analysis
-    needs: unit-tests         # waits for unit-tests to pass first
     runs-on: ubuntu-latest
 
     steps:
-      # fetch-depth: 0 pulls FULL git history
-      # SonarCloud needs this to properly analyze code changes
-      - name: Checkout repository
+      # Checkout Repository
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      # Setup Node.js
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            backend/package-lock.json
+            frontend/package-lock.json
+
+      # Backend
+      - name: Install Backend Dependencies
+        working-directory: backend
+        run: npm install
+
+      - name: Run Backend Tests
+        working-directory: backend
+        run: npm test -- --ci
+
+      # Frontend
+      - name: Install Frontend Dependencies
+        working-directory: frontend
+        run: npm install
+
+      - name: Run Frontend Tests
+        working-directory: frontend
+        run: npm test -- --watchAll=false
+
+# ============================================================
+# JOB 2 - SONARCLOUD ANALYSIS
+# ============================================================
+  sonarcloud:
+    name: SonarCloud Code Analysis
+    needs: unit-tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      # Official SonarCloud scan action
-      # Reads sonar-project.properties automatically from repo root
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
       - name: SonarCloud Scan
-        uses: SonarSource/sonarcloud-github-action@master
+        uses: SonarSource/sonarqube-scan-action@v5
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}   # auto-provided by GitHub, no setup needed
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}       # the secret you added earlier
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
-
-  # ==========================================================
-  # JOB 3: BUILD & PUSH DOCKER IMAGES
-  # Only runs after sonarcloud scan passes
-  # ==========================================================
+# ============================================================
+# JOB 3 - BUILD & PUSH DOCKER IMAGES
+# ============================================================
   build-and-push:
     name: Build and Push Docker Images
     needs: sonarcloud
     runs-on: ubuntu-latest
 
     steps:
-      # Step 1: Get the code again (each job starts on a FRESH runner,
-      # so we must checkout the repo in every job that needs the code)
-      - name: Checkout repository
+      # Checkout Repository
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
-      # Step 2: Set up Docker Buildx (advanced builder, supports caching,
-      # multi-platform builds, etc. — best practice even for simple builds)
+      # Setup Docker Buildx
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # Step 3: Log in to Docker Hub using the secrets you configured
+      # Login DockerHub
       - name: Login to Docker Hub
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      # Step 4: Build backend image from ./backend/Dockerfile
-      # and push it directly to your "nam-back" Docker Hub repo
-      - name: Build & push backend image
+      # Backend Image
+      - name: Build & Push Backend Image
         id: backend_build
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: ./backend
           push: true
           tags: vipulsingh2200/nam-back:latest
 
-      # Step 5: Build frontend image from ./frontend/Dockerfile
-      # and push it to your "nam-front" Docker Hub repo
-      - name: Build & push frontend image
+      # Frontend Image
+      - name: Build & Push Frontend Image
         id: frontend_build
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: ./frontend
           push: true
           tags: vipulsingh2200/nam-front:latest
 
-      # ======================================================
-      # POST-BUILD ACTION (runs only if the build/push above succeeded)
-      # This confirms both images were pushed and prints their digests
-      # (a digest is a unique hash identifying the exact image build)
-      # ======================================================
-      - name: Post-build confirmation
+      # Success Message
+      - name: Build Successful
         if: success()
         run: |
-          echo "✅ Backend image pushed: vipulsingh2200/nam-back:latest"
-          echo "Backend digest: ${{ steps.backend_build.outputs.digest }}"
-          echo "✅ Frontend image pushed: vipulsingh2200/nam-front:latest"
-          echo "Frontend digest: ${{ steps.frontend_build.outputs.digest }}"
-          echo "🎉 Pipeline completed successfully. Images are ready to pull on EC2."
+          echo "✅ Backend Image Pushed Successfully"
+          echo "Backend Digest: ${{ steps.backend_build.outputs.digest }}"
+          echo "✅ Frontend Image Pushed Successfully"
+          echo "Frontend Digest: ${{ steps.frontend_build.outputs.digest }}"
+          echo "🎉 CI/CD Pipeline Completed Successfully."
 
-      # ======================================================
-      # POST-BUILD ACTION (runs ONLY if something failed above)
-      # Gives a clear failure message in the logs
-      # ======================================================
-      - name: Post-build failure notice
+      # Failure Message
+      - name: Build Failed
         if: failure()
         run: |
-          echo "❌ Docker build or push failed. Check the logs above for details."
+          echo "❌ Docker Build or Push Failed."
+          echo "Check the logs above for more information."
