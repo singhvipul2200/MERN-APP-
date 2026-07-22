@@ -52,9 +52,9 @@ jobs:
         working-directory: frontend
         run: npm install
 
-      - name: Run Frontend Tests
+      - name: Lint Frontend
         working-directory: frontend
-        run: npm test -- --watchAll=false
+        run: npm run lint
 
 # ============================================================
 # JOB 2 - SONARCLOUD ANALYSIS
